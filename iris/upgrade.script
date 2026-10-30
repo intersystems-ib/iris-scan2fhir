@@ -1,0 +1,25 @@
+zn "APP"
+set sc = ##class(Ens.Director).StopProduction(10,1)
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+for obsolete="App.Interop.TableMappingOperation","App.AIHub.TableMapper" { if ##class(%Dictionary.ClassDefinition).%ExistsId(obsolete) { set sc=$SYSTEM.OBJ.Delete(obsolete_".cls") if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc) if '$SYSTEM.Status.IsOK(sc) halt } }
+set sc = $SYSTEM.OBJ.LoadDir("/opt/irisapp/fhir-r5/Model", "ck", , 1)
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+set sc = $SYSTEM.OBJ.LoadDir("/opt/irisapp/src/App", "ck", , 1)
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+set sc = ##class(App.Setup.Catalog).Run()
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+set sc = ##class(App.Setup.HeaderDefinitions).Run()
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+set sc = ##class(Ens.Director).SetAutoStart("App.Interop.Production")
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+set sc = ##class(Ens.Director).StartProduction("App.Interop.Production")
+if '$SYSTEM.Status.IsOK(sc) do $SYSTEM.Status.DisplayError(sc)
+if '$SYSTEM.Status.IsOK(sc) halt
+write "Scan2FHIR upgrade complete",!
+halt

@@ -1,0 +1,26 @@
+Class Spain.FHIR.DTL.vR5.Model.Element.Claim.insurance Extends HS.FHIR.DTL.vR4.Model.Base.BackboneElement [ Not ProcedureBlock ]
+{
+/// Generated from the HL7 FHIR R5 core StructureDefinitions (5.0.0).
+
+// BEGIN GENERATED FHIR R5 PROPERTIES
+Property sequence As %Integer(XMLNAME = "sequence", XMLPROJECTION = "ATTRIBUTE") [ Required ];
+Property focal As %Boolean(XMLNAME = "focal", XMLPROJECTION = "ATTRIBUTE") [ Required ];
+Property identifier As Spain.FHIR.DTL.vR5.Model.Datatype.Identifier(XMLNAME = "identifier", XMLPROJECTION = "ELEMENT");
+Property coverage As HS.FHIR.DTL.vR4.Model.Base.Reference(XMLNAME = "coverage", XMLPROJECTION = "ELEMENT") [ Required ];
+Property businessArrangement As %String(MAXLEN = 1000000, XMLNAME = "businessArrangement", XMLPROJECTION = "ATTRIBUTE");
+Property preAuthRef As list Of %String(MAXLEN = 1000000, XMLNAME = "preAuthRef", XMLPROJECTION = "ELEMENT");
+Property claimResponse As HS.FHIR.DTL.vR4.Model.Base.Reference(XMLNAME = "claimResponse", XMLPROJECTION = "ELEMENT");
+// END GENERATED FHIR R5 PROPERTIES
+
+Parameter ELEMENTQUALIFIED = 1;
+
+Parameter XMLNAME = "Claim.insurance";
+
+Parameter XMLPROJECTION = "ELEMENT";
+
+Parameter XMLSEQUENCE = 1;
+
+Parameter XMLTYPE = "Claim.insurance";
+
+}
+

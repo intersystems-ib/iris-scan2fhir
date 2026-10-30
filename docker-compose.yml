@@ -1,0 +1,55 @@
+name: ${COMPOSE_PROJECT_NAME:-iris-scan2fhir}
+services:
+  iris:
+    init: true
+    build:
+      context: .
+      dockerfile: iris/Dockerfile
+      args:
+        IMAGE: ${IRIS_IMAGE:-intersystemsdc/irishealth-community:2026.3-zpm}
+    command: --check-caps false --ISCAgent false
+    environment:
+      ISC_DATA_DIRECTORY: /iris-shared/durable
+      MAX_PDF_MB: ${MAX_PDF_MB:-10}
+      MAX_PDF_PAGES: ${MAX_PDF_PAGES:-20}
+      OCR_THREADS: ${OCR_THREADS:-4}
+      HF_HOME: /iris-shared/huggingface
+    ports:
+      - "127.0.0.1:${IRIS_WEB_PORT:-52775}:52773"
+      - "127.0.0.1:${IRIS_SUPERSERVER_PORT:-1974}:1972"
+    volumes:
+      - ./iris/shared:/iris-shared
+      - iris-data:/iris-shared/durable
+      - ./test:/opt/irisapp/test:ro
+    restart: unless-stopped
+    networks: [app-network]
+  webgateway:
+    init: true
+    build:
+      context: .
+      dockerfile: webgateway/Dockerfile
+    environment:
+      ISC_DATA_DIRECTORY: /webgateway-shared/durable
+      ISC_CSP_CONF_FILE: /webgateway-shared/CSP.conf
+      ISC_CSP_INI_FILE: /webgateway-shared/CSP.ini
+    volumes:
+      - ./webgateway/shared:/webgateway-shared
+    ports:
+      - "127.0.0.1:${WEBGATEWAY_HTTP_PORT:-8083}:80"
+    depends_on: [iris]
+    restart: unless-stopped
+    networks: [app-network]
+  frontend:
+    init: true
+    build: ./frontend
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-5174}:80"
+    depends_on: [webgateway]
+    restart: unless-stopped
+    networks: [app-network]
+networks:
+  app-network:
+    driver: bridge
+volumes:
+  iris-data:
+    name: ${COMPOSE_PROJECT_NAME:-iris-scan2fhir}-iris-data

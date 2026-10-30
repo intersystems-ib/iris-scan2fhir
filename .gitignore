@@ -1,0 +1,16 @@
+.env
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.pyc
+iris/shared/*
+!iris/shared/.gitkeep
+models/*
+!models/.gitkeep
+*.pdf
+tmp/
+output/
+iris/shared/durable/
+iris/shared/huggingface/
+iris/tests/
+scripts/

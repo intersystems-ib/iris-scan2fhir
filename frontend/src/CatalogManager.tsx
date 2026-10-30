@@ -1,0 +1,86 @@
+import { useEffect, useRef, useState } from 'react';
+import { request, type TablePreview } from './api';
+
+import { FHIRMappingEditor } from './FHIRMappingEditor';
+import { DocumentTablesEditor } from './DocumentTablesEditor';
+import { defaultAliases, emptySchema, type Catalog, type DocumentDefinition, type Laboratory, type TableType, type MappingPreview } from './catalog';
+
+const aliasLabels = {name:'Prueba',value:'Resultado',unit:'Unidad',referenceRange:'Referencia'};
+const lines = (text:string) => text.split('\n').map(v=>v.trim()).filter(Boolean);
+const copy = <T,>(value:T):T => JSON.parse(JSON.stringify(value));
+export function CatalogManager({onUpload,initialDefinitionId,sample:sourceSample}:{onUpload:()=>void;initialDefinitionId?:string;sample?:TablePreview|null}) {
+  const pendingDefinition=useRef(initialDefinitionId);
+  const savedDraft=useRef('');
+  const [catalog,setCatalog] = useState<Catalog>({laboratories:[],documents:[],tableTypes:[]});
+  const [selectedLab,setSelectedLab] = useState('recoletas');
+  const [lab,setLab] = useState<Laboratory|null>(null);
+  const [doc,setDoc] = useState<DocumentDefinition|null>(null);
+  const [assignmentLab,setAssignmentLab]=useState(''),[activateAssignment,setActivateAssignment]=useState(true);
+  const [error,setError] = useState(''), [notice,setNotice] = useState(''), [busy,setBusy] = useState(false);
+  const [html,setHtml] = useState(''), [previewType,setPreviewType] = useState(''), [preview,setPreview] = useState<MappingPreview|null>(null);
+  const [sample,setSample] = useState(''), [identification,setIdentification] = useState<{reason:string;origin:string;format:string}|null>(null);
+  async function refresh() { const data = await request<Catalog>('/catalog'); setCatalog(data); return data; }
+  useEffect(()=>{refresh().catch(e=>setError(e.message));},[]);
+  useEffect(()=>{if(!catalog.laboratories.some(l=>l.code===selectedLab))setSelectedLab(catalog.laboratories[0]?.code??'');},[catalog.laboratories,selectedLab]);
+  useEffect(()=>{setDoc(null);setLab(null);setPreview(null);setIdentification(null);},[selectedLab]);
+  useEffect(()=>{const target=catalog.documents.find(d=>String(d.id)===String(pendingDefinition.current));if(!target)return;if(selectedLab!==target.laboratory){setSelectedLab(target.laboratory);return;}editDoc(target);pendingDefinition.current=undefined;},[catalog,selectedLab]);
+  async function work(action:()=>Promise<void>) { setBusy(true);setError('');setNotice('');try{await action();}catch(e){setError(e instanceof Error?e.message:'No se pudo guardar.');}finally{setBusy(false);} }
+  async function save(path:string,body:unknown){return request<{saved:{id:string;version?:number;revision?:number}}>(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});}
+  const documents = catalog.documents.filter(d=>d.isLatest&&d.laboratory===selectedLab);
+  const labInfo = catalog.laboratories.find(l=>l.code===selectedLab);
+  function newDoc(){const table:TableType={id:"table-1",code:"table-1",name:"Tabla de resultados",version:1,isLatest:true,schema:emptySchema()};setDoc({id:"",laboratory:selectedLab,laboratoryName:labInfo?.name??"",code:"",name:"",version:0,isLatest:true,enabled:true,recognition:{issuerPhrases:[],domains:[],documentPhrases:[],headerMode:"four-column"},headerAliases:copy(defaultAliases),tableTypes:[{code:table.code,version:1}],tables:[table]});setPreview(null);}
+  function editDoc(value:DocumentDefinition){const draft=copy({...value,tables:value.tables??value.tableTypeDefinitions??catalog.tableTypes.filter(t=>value.tableTypes.some(b=>b.code===t.code&&b.version===t.version))});savedDraft.current=JSON.stringify(draft);setDoc(draft);setAssignmentLab('');setActivateAssignment(value.enabled||value.laboratory==='unidentified');setPreview(null);setPreviewType('');}
+  const dirty=!!doc?.id&&JSON.stringify(doc)!==savedDraft.current;
+  async function assignLaboratory(){if(!doc?.id||!assignmentLab||dirty)return;await work(async()=>{
+    const result=await save('/catalog/assign-laboratory',{definitionId:Number(doc.id),baseVersion:doc.version,sourceLaboratory:doc.laboratory,laboratory:assignmentLab,activate:activateAssignment});
+    setDoc(null);await refresh();pendingDefinition.current=String(result.saved.id);setSelectedLab(assignmentLab);setNotice('Formato asignado al laboratorio. Se conservan sus versiones, tablas y mapeos FHIR.');
+  });}
+  async function saveDoc(){if(!doc)return; await work(async()=>{
+    const {laboratory,code,name,enabled,recognition,headerAliases,tableTypes}=doc;
+    const cleanRecognition={...recognition,issuerPhrases:lines(recognition.issuerPhrases.join("\n")),domains:lines(recognition.domains.join("\n")),documentPhrases:lines(recognition.documentPhrases.join("\n"))};
+    const cleanAliases=Object.fromEntries(Object.entries(headerAliases).map(([key,values])=>[key,lines(values.join("\n"))]));
+    const header=doc.headerExtraction??{fields:[],stopLabels:[]};
+    const headerExtraction={fields:header.fields.map(field=>({...field,aliases:lines(field.aliases.join('\n'))})),stopLabels:lines(header.stopLabels.join('\n'))};
+    const tables=doc.tables?.map(t=>({...t,schema:{...t.schema,...(t.schema.kind==='label-value'?{labelFields:t.schema.labelFields?.map(f=>({...f,aliases:lines(f.aliases.join('\n'))})),stopLabels:lines((t.schema.stopLabels??[]).join('\n'))}:{})}}));
+    const result=await save('/catalog/documents',{laboratory,code,name,enabled,recognition:cleanRecognition,headerAliases:cleanAliases,tableTypes,tables,tableGroups:doc.tableGroups??[],baseVersion:doc.version,headerExtraction,fhirMapping:doc.fhirMapping??{enabled:false,rules:[]}});
+    const data=await refresh();editDoc(data.documents.find(d=>String(d.id)===String(result.saved.id))!);setNotice(`Definición guardada. Versión ${result.saved.version}.`);
+  });}
+  async function saveLab(){if(!lab)return;await work(async()=>{await save('/catalog/laboratories',{code:lab.code,name:lab.name,enabled:lab.enabled,baseRevision:lab.revision,...(lab.recognitionAliases?{recognitionAliases:lines(lab.recognitionAliases.join('\n'))}:{})});await refresh();setSelectedLab(lab.code);setLab(null);setNotice('Laboratorio guardado.');});}
+  async function testMapping(){if(!doc?.id)return;const [code,version]=previewType.split(':');await work(async()=>{setPreview(null);const result=await request<MappingPreview>('/catalog/map-table',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({html,documentDefinitionId:Number(doc.id),tableType:{code,version:Number(version)},context:{origin:doc.laboratory}})});setPreview(result);});}
+  return <div className="catalog-manager">
+    <div className="intro"><div className="eyebrow">CONFIGURACIÓN DOCUMENTAL</div><h1>Laboratorios y formatos.</h1><p>Configura las cabeceras y el tipo de valor de cada columna. La extracción utiliza reglas deterministas y señala los valores incompatibles para revisión.</p><button className="primary" disabled={busy} onClick={onUpload}>Extraer documento y construir Bundle ↗</button></div>
+    <div className="catalog-toolbar"><button className="secondary" disabled={busy} onClick={()=>work(async()=>{await refresh();setDoc(null);setLab(null);setPreview(null);setNotice("Catálogo actualizado.");})}>Recargar catálogo</button><button className="secondary" disabled={busy} onClick={()=>setSelectedLab('unidentified')}>Formatos pendientes de asignar · {catalog.documents.filter(d=>d.isLatest&&d.laboratory==='unidentified').length}</button></div>
+    {error&&<div className="error" role="alert">{error}</div>}{notice&&<p className="catalog-notice" role="status">{notice}</p>}
+    <fieldset disabled={busy} className="catalog-fieldset">
+    <>
+      <section className="catalog-card"><div className="catalog-toolbar"><label>Laboratorio<select value={selectedLab} onChange={e=>setSelectedLab(e.target.value)}>{catalog.laboratories.map(l=><option key={l.code} value={l.code}>{l.name} · {l.code}{l.enabled?'':' · Desactivado'}</option>)}</select></label><button className="secondary" onClick={()=>setLab({code:'',name:'',enabled:true,revision:0})}>Nuevo laboratorio</button><button className="secondary" disabled={!labInfo} onClick={()=>setLab(copy(labInfo!))}>Editar laboratorio</button><button className="primary" disabled={!labInfo} onClick={newDoc}>Nuevo formato documental</button></div>
+      {lab&&<div className="catalog-form"><label>Código estable<input disabled={lab.revision>0} value={lab.code} onChange={e=>setLab({...lab,code:e.target.value})} placeholder="mi-laboratorio"/></label><label>Nombre<input value={lab.name} onChange={e=>setLab({...lab,name:e.target.value})}/></label><label>Nombres que aparecen en los informes · Uno por línea<textarea value={(lab.recognitionAliases??[]).join('\n')} onChange={e=>setLab({...lab,recognitionAliases:e.target.value.split('\n')})} placeholder="Nombre comercial o firma impresa"/></label><label className="catalog-check"><input type="checkbox" checked={lab.enabled} onChange={e=>setLab({...lab,enabled:e.target.checked})}/>Utilizar este laboratorio en el reconocimiento</label><div className="catalog-toolbar"><button className="primary" onClick={saveLab}>Guardar laboratorio</button><button className="secondary" onClick={()=>setLab(null)}>Cerrar</button></div></div>}
+      <div className="catalog-definition-list">{documents.length?documents.map(d=><button key={d.id} className={String(doc?.id)===String(d.id)?'selected':''} onClick={()=>editDoc(d)}><b>{d.name}</b><span>Versión {d.version} · {d.enabled?'Activa':'Desactivada'} · {d.tableTypes.length} tipos de tabla · {d.generation?.mode==='automatic'?'Generada al cargar un informe':'Configuración manual'}</span></button>):<p>Define un formato documental para poder probar sus tablas.</p>}</div></section>
+      {doc&&<section className="catalog-card"><h2>{doc.version?`${doc.name} · Versión ${doc.version}`:'Nuevo formato documental'}</h2><p>Guardar crea una versión nueva. Las pruebas utilizan la versión seleccionada.</p>
+        {doc.id&&doc.isLatest&&<div className="catalog-form"><h3>Laboratorio del formato</h3><p>Asignado a: <b>{doc.laboratoryName} · {doc.laboratory}</b>. La asignación conserva todas las versiones y sus mapeos.</p><label>Asignar a laboratorio<select value={assignmentLab} onChange={e=>setAssignmentLab(e.target.value)}><option value="">Seleccionar laboratorio</option>{catalog.laboratories.filter(l=>l.code!=='unidentified'&&l.code!==doc.laboratory).map(l=><option key={l.code} value={l.code}>{l.name} · {l.code}{l.enabled?'':' · Desactivado'}</option>)}</select></label><label className="catalog-check"><input type="checkbox" checked={activateAssignment} onChange={e=>setActivateAssignment(e.target.checked)}/>Utilizar el formato en nuevos informes tras asignarlo</label>{dirty&&<p>Guarda primero los cambios del formato para poder asignarlo.</p>}<button className="secondary" disabled={!assignmentLab||dirty} onClick={assignLaboratory}>Asignar laboratorio</button></div>}
+        {doc.generation?.mode==='automatic'&&<p className="catalog-notice">Detectada automáticamente · Sesión {doc.generation.interopSessionId}. Revise las estructuras y sus equivalencias FHIR antes de utilizar este formato.</p>}
+        {!!doc.recognition.headerSignatures?.length&&<p>{doc.recognition.headerSignatures.length} patrones de cabecera verificados. Las pruebas y el número de filas pueden variar.</p>}
+        <div className="catalog-grid"><label>Código del formato<input disabled={doc.version>0} value={doc.code} onChange={e=>setDoc({...doc,code:e.target.value})} placeholder="resultados-generales"/></label><label>Nombre del formato<input value={doc.name} onChange={e=>setDoc({...doc,name:e.target.value})}/></label></div>
+        <label className="catalog-check"><input type="checkbox" checked={doc.enabled} onChange={e=>setDoc({...doc,enabled:e.target.checked})}/>Utilizar esta definición en nuevos informes</label>
+        <details><summary>Mapeo a recursos FHIR R5</summary><FHIRMappingEditor value={doc.fhirMapping??{enabled:false,rules:[]}} onChange={fhirMapping=>setDoc({...doc,fhirMapping})} definition={doc} tableTypes={doc.tables??[]}/></details>
+        <h3>Reconocer el documento</h3><div className="catalog-grid"><label>Firmas del laboratorio · Una por línea<textarea value={doc.recognition.issuerPhrases.join('\n')} onChange={e=>setDoc({...doc,recognition:{...doc.recognition,issuerPhrases:e.target.value.split('\n')}})} placeholder="Nombre impreso del laboratorio"/></label><label>Dominios corporativos · Uno por línea<textarea value={doc.recognition.domains.join('\n')} onChange={e=>setDoc({...doc,recognition:{...doc.recognition,domains:e.target.value.split('\n')}})} placeholder="laboratorio.es"/></label><label>Alguna de estas frases debe aparecer · Opcional<textarea value={doc.recognition.documentPhrases.join('\n')} onChange={e=>setDoc({...doc,recognition:{...doc.recognition,documentPhrases:e.target.value.split('\n')}})} placeholder="Para distinguir formatos del mismo laboratorio"/></label><label>Cabecera que debe reconocer<select value={doc.recognition.headerMode} onChange={e=>setDoc({...doc,recognition:{...doc.recognition,headerMode:e.target.value}})}>{!!doc.recognition.headerSignatures?.length&&<option value="learned-structure">Estructuras aprendidas del documento</option>}<option value="four-column">Prueba, resultado, unidad y referencia</option><option value="name-value">Prueba y resultado</option><option value="issuer-laboratory">Firma y contenido de laboratorio</option></select></label></div>
+        <h3>Variantes de las cabeceras · Una por línea</h3><div className="catalog-grid">{(Object.keys(aliasLabels) as (keyof typeof aliasLabels)[]).map(key=><label key={key}>{aliasLabels[key]}<textarea value={doc.headerAliases[key].join('\n')} onChange={e=>setDoc({...doc,headerAliases:{...doc.headerAliases,[key]:e.target.value.split('\n')}})}/></label>)}</div>
+        <DocumentTablesEditor sample={sourceSample} tables={doc.tables??[]} groups={doc.tableGroups??[]} presets={catalog.headerPresets??[]} usedGroups={(doc.fhirMapping?.rules??[]).flatMap(r=>r.selector.kind==="group"?[r.selector.code]:[])} onGroupsChange={tableGroups=>setDoc({...doc,tableGroups})} usedCodes={(doc.fhirMapping?.rules??[]).flatMap(r=>r.selector.kind==="tableType"?[r.selector.code]:[])} onChange={tables=>{setDoc({...doc,tables,tableTypes:tables.map(t=>({code:t.code,version:t.version}))});setPreview(null);}}/>
+        <div className="catalog-toolbar"><button className="primary" onClick={saveDoc}>{doc.version?'Guardar nueva versión':'Guardar definición'}</button><button className="secondary" onClick={()=>setDoc(null)}>Cerrar</button></div>
+        <details><summary>Versiones anteriores</summary>{catalog.documents.filter(d=>d.laboratory===doc.laboratory&&d.code===doc.code).map(d=><p key={d.id}>Versión {d.version} · {d.name} · {d.enabled?'Activa en esa versión':'Desactivada'}{d.isLatest?' · Última versión':''}</p>)}</details>
+      </section>}
+      <section className="catalog-card"><h2>Probar el reconocimiento</h2><p>Pega texto OCR y, si lo tienes, el HTML de una tabla. La prueba usa el catálogo guardado, sin guardar datos clínicos.</p><label>Contenido OCR<textarea value={sample} onChange={e=>setSample(e.target.value)} rows={5}/></label><button className="secondary" disabled={!sample.trim()} onClick={()=>work(async()=>{setIdentification(null);const result=await request<{reason:string;origin:string;format:string}>('/catalog/identify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pages:[{page:1,text:sample,markdown:sample}]})});setIdentification(result);})}>Comprobar identificación</button>{identification&&<p role="status">{identification.reason} · Origen: {identification.origin} · Formato: {identification.format}</p>}</section>
+      {doc?.id&&<section className="catalog-card"><h2>Probar una estructura mediante reglas</h2><p>Utiliza la definición guardada y una tabla HTML completa para comprobar la extracción y los tipos de valor.</p><label>Tipo de tabla<select value={previewType} onChange={e=>{setPreviewType(e.target.value);setPreview(null);}}><option value="">Seleccionar estructura</option>{doc.tableTypes.map(b=><option key={b.code} value={`${b.code}:${b.version}`}>{(doc.tables??[]).find(t=>t.code===b.code&&t.version===b.version)?.name??b.code} · v{b.version}</option>)}</select></label><label>HTML original de una tabla<textarea value={html} onChange={e=>setHtml(e.target.value)} rows={7} placeholder="<table>...</table>"/></label><button className="primary" disabled={!previewType||!html.trim()} onClick={testMapping}>Probar extracción</button>{preview&&<><p>Sesión de interoperabilidad {preview.catalogTrace.interopSessionId}</p>{preview.issues?.map((issue,i)=><p className="validation-issues" key={i}>{issue.message}</p>)}<div className="table-scroll"><table><thead><tr>{preview.columns.map((c,i)=><th key={i}>{c.label}</th>)}</tr></thead><tbody>{preview.rows.map((row,i)=><tr key={i}>{row.map((c,j)=><td key={j} title={c.sourceCells.join(', ')}>{c.text}</td>)}</tr>)}</tbody></table></div></>}</section>}
+    </>
+    </fieldset>{busy&&<p className="progress-message" role="status">Procesando la operación…</p>}
+  </div>;
+}
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,20 @@
+Class Spain.FHIR.DTL.vR5.Model.Element.EvidenceReport.relatesTo Extends HS.FHIR.DTL.vR4.Model.Base.BackboneElement [ Not ProcedureBlock ]
+{
+/// Generated from the HL7 FHIR R5 core StructureDefinitions (5.0.0).
+
+// BEGIN GENERATED FHIR R5 PROPERTIES
+Property code As %String(MAXLEN = 1000000, XMLNAME = "code", XMLPROJECTION = "ATTRIBUTE") [ Required ];
+Property target As Spain.FHIR.DTL.vR5.Model.Element.EvidenceReport.relatesTo.target(XMLNAME = "target", XMLPROJECTION = "ELEMENT") [ Required ];
+// END GENERATED FHIR R5 PROPERTIES
+
+Parameter ELEMENTQUALIFIED = 1;
+
+Parameter XMLNAME = "EvidenceReport.relatesTo";
+
+Parameter XMLPROJECTION = "ELEMENT";
+
+Parameter XMLSEQUENCE = 1;
+
+Parameter XMLTYPE = "EvidenceReport.relatesTo";
+
+}
